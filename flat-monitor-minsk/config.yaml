@@ -1,0 +1,167 @@
+# =====================================================================
+#  Настройки мониторинга аренды. Меняй здесь — код трогать не нужно.
+# =====================================================================
+
+# ---------- Жёсткие фильтры: что не прошло — не присылается ----------
+filters:
+  max_price_usd: 550
+  min_price_usd: 150          # дешевле — почти всегда посуточно, комната или ошибка
+  rooms: [1, 2]               # 1 = классическая однушка (студии отсекаются), 2 = евродвушка/двушка
+  area_min: 35
+  area_max: 62
+  # подстроки в районе/адресе/геоданных — такие объявления отбрасываются
+  exclude_districts: ["заводск", "партизанск", "чижовк", "шабан"]
+  # стоп-слова в заголовке и описании
+  # агентства и риелторы: отсекаются по пометке площадки (компания/агент) и по тексту объявления.
+  # «без комиссии», «без посредников», «не агентство» не считаются.
+  exclude_agencies: true
+  agency_regex: "агентств|агентом|риелт|риэлт|риелтер|комисси|вознагражден|услуги\\s+(агент|риел|риэл)|\\bан\\s*[«\"]|договор\\s+(с\\s+)?агент|посредническ"
+  exclude_regex: "посуточ|на сутк|почасов|сдам комнату|сда[её]тся комната|комната в квартире|подселени|койко|хостел|только (для )?(одной )?девушк|только (для )?(одного )?(мужчин|парн)"
+
+# ---------- Приоритетные районы: дают баллы в рейтинг ----------
+# keywords — ищутся в адресе, районе и тексте объявления (в нижнем регистре, можно часть слова)
+# points   — [широта, долгота]; объявление в радиусе radius_km от любой точки попадает в зону
+priority_zones:
+  - name: "Петровщина / Малиновка / Михалово / Грушевка / Ин-т культуры"
+    weight: 3
+    radius_km: 1.3
+    keywords: ["петровщин", "малиновк", "грушевк", "михалов", "институт культуры",
+               "газеты правда", "газеты «правда", "дзержинского", "есенина", "лобанка",
+               "жуковского", "щорса", "голубева", "гурского"]
+    points:
+      - [53.8494, 27.4749]    # м. Малиновка
+      - [53.8646, 27.4857]    # м. Петровщина
+      - [53.8770, 27.4973]    # м. Михалово
+      - [53.8866, 27.5149]    # м. Грушевка
+      - [53.8855, 27.5386]    # м. Институт культуры
+  - name: "Центр по пр. Победителей / Дрозды"
+    weight: 2
+    radius_km: 1.0
+    keywords: ["победителей", "дрозд", "веснянк", "тимирязева"]
+    points:
+      - [53.9090, 27.5390]    # пр. Победителей у Дворца спорта
+      - [53.9200, 27.5150]    # пр. Победителей, парк Победы
+      - [53.9365, 27.4830]    # пр. Победителей, Минск-Арена
+      - [53.9440, 27.4700]    # Дрозды
+
+# ---------- Рейтинг (сумма баллов) ----------
+scoring:
+  brick: 3                    # кирпичный дом — главный приоритет (слышимость)
+  monolith: 1
+  panel: 0
+  block: -2                   # каркасно-блочный / блочный
+  double_bed: 2               # двуспальная / большая кровать / 160–180
+  sofa_only: -1
+  no_furniture: -2
+  isolated_bedroom: 1         # евродвушка или 2 комнаты
+  ideal_area: [35, 50]
+  ideal_area_bonus: 1
+  owner: 1                    # собственник, без агентства
+  hot: 7                      # от этого балла — 🔥
+  good: 4                     # от этого балла — ✅, ниже — 🟡
+
+send:
+  min_score: -10              # ниже не присылать (поставь 3, если сообщений слишком много)
+  only_priority_zones: false  # true — только приоритетные районы
+  max_per_run: 20
+  first_run_limit: 400        # первый запуск: присылает все подходящие (остаток сверх лимита — следующими проходами)
+  fresh_days: 3               # младше — «🆕 свежее» и идёт первым; старше — «🕰 старое»
+
+geo:
+  enabled: true               # район по координатам через OpenStreetMap
+  budget: 40                  # запросов за проход
+  budget_first_run: 400
+
+state:
+  keep_days: 60
+
+# ---------- Площадки ----------
+# api_url / list_url лучше брать прямо с сайта после настройки фильтров (см. ТЗ).
+# detail_selectors — CSS-селекторы блоков «описание» и «характеристики» на странице объявления.
+sources:
+  - name: kufar
+    title: Kufar
+    type: kufar
+    enabled: true
+    api_url: "https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&cur=USD&gtsy=country-belarus~province-minsk~locality-minsk&lang=ru&prc=r%3A150%2C550&rms=v.or%3A1%2C2&size=30&sort=lst.d&typ=let"
+    pages: 2                  # обычный проход — свежие страницы
+    first_run_pages: 15       # первый запуск — всё, что сейчас опубликовано
+    fetch_details: true
+    detail_limit: 25
+    first_run_detail_limit: 300
+    delay_sec: 1.5
+    detail_selectors: []
+
+  - name: onliner
+    title: Onliner
+    type: onliner
+    enabled: true
+    api_url: "https://r.onliner.by/sdapi/ak.api/search/apartments?rent_type%5B%5D=1_room&rent_type%5B%5D=2_rooms&price%5Bmin%5D=150&price%5Bmax%5D=550&currency=usd&only_owner=true&bounds%5Blb%5D%5Blat%5D=53.78&bounds%5Blb%5D%5Blong%5D=27.36&bounds%5Brt%5D%5Blat%5D=54.02&bounds%5Brt%5D%5Blong%5D=27.78&order=created_at%3Adesc"
+    pages: 2                  # обычный проход — свежие страницы
+    first_run_pages: 15       # первый запуск — всё, что сейчас опубликовано
+    fetch_details: true
+    detail_limit: 25
+    first_run_detail_limit: 300
+    delay_sec: 1.5
+    detail_selectors: []
+
+  - name: realt
+    title: Realt
+    type: realt
+    enabled: true
+    list_url: "https://realt.by/rent/flat-for-long/"
+    item_url: "https://realt.by/rent-flat-for-long/object/{code}/"
+    link_regex: "realt\\.by/.*?/object/(\\d+)"
+    page_param: page          # параметр номера страницы в адресе выдачи
+    pages: 1
+    first_run_pages: 8
+    fetch_details: true
+    detail_limit: 25
+    delay_sec: 2
+    detail_selectors: []
+
+  - name: domovita
+    title: Domovita
+    type: generic
+    enabled: true
+    list_url: "https://domovita.by/minsk/flats/rent"
+    link_regex: "domovita\\.by/minsk/flats/rent/[^?#]*?(\\d{4,})"
+    card_selector: ""
+    page_param: page          # параметр номера страницы в адресе выдачи
+    pages: 1
+    first_run_pages: 8
+    fetch_details: true
+    detail_limit: 20
+    delay_sec: 2
+    detail_selectors: []
+
+  # Дополнительные площадки — включаются после проверки (см. ТЗ, этап 2.5)
+  - name: neagent
+    title: Neagent
+    type: generic
+    enabled: false
+    list_url: "https://neagent.by/kvartira/snyat/minsk"
+    link_regex: "neagent\\.by/.*?(\\d{5,})"
+    card_selector: ""
+    page_param: page          # параметр номера страницы в адресе выдачи
+    pages: 1
+    first_run_pages: 5
+    fetch_details: true
+    detail_limit: 15
+    delay_sec: 2
+    detail_selectors: []
+
+  - name: gohome
+    title: GoHome
+    type: generic
+    enabled: false
+    list_url: "https://gohome.by/rent/flat/minsk"
+    link_regex: "gohome\\.by/.*?(\\d{5,})"
+    card_selector: ""
+    page_param: page          # параметр номера страницы в адресе выдачи
+    pages: 1
+    first_run_pages: 5
+    fetch_details: true
+    detail_limit: 15
+    delay_sec: 2
+    detail_selectors: []
