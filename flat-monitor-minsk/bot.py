@@ -162,6 +162,13 @@ def date_from_text(t: str):
             cand = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)), tzinfo=MINSK_TZ)
         except ValueError:
             cand = None
+    if cand is None:   # ISO «2026-11-09 19:58» (neagent)
+        m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", low)
+        if m:
+            try:
+                cand = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=MINSK_TZ)
+            except ValueError:
+                cand = None
     if cand is None:
         m = re.search(r"\b(\d{1,2})\s+(янв|фев|мар|апр|мая|май|июн|июл|авг|сен|окт|ноя|дек)\w*", low)
         if m:
@@ -344,7 +351,7 @@ def parse_kufar(ad) -> Listing | None:
             area = num(v if v is not None else vl)
         elif "кухн" in kl and "площад" in kl:
             kitchen = num(v if v is not None else vl)
-        elif kl.startswith("район"):
+        elif kl.startswith("район") or key == "area" or "/ район" in kl:   # Kufar: p=area, pl=«Город / Район»
             district = str(vl)
         if "стен" in kl or "тип дома" in kl or "материал" in kl:
             walls.append(str(vl))
