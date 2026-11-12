@@ -148,10 +148,21 @@ def date_from_text(t: str):
     """«Сегодня в 12:30», «вчера в …», «3 дня назад», «10 ноября», «10.11.2026» -> unix-время."""
     low = t.lower()
     now = datetime.now(MINSK_TZ)
-    if re.search(r"сегодня\s*(?:в|,)\s*\d", low) or re.search(r"\d+\s*(?:мин|час)\w*\s+назад", low):
-        return now.timestamp()
+    # second=1 — признак «время известно» (дата без времени ставится на 00:00:00)
+    m = re.search(r"(\d+)\s*(мин|час)\w*\s+назад", low)
+    if m:
+        return now.timestamp() - int(m.group(1)) * (60 if m.group(2) == "мин" else 3600)
+    m = re.search(r"(сегодня|вчера)\s*(?:в|,)\s*(\d{1,2}):(\d{2})", low)
+    if m:
+        try:
+            d = now.replace(hour=int(m.group(2)), minute=int(m.group(3)), second=1, microsecond=0)
+        except ValueError:
+            d = now
+        return d.timestamp() - (86400 if m.group(1) == "вчера" else 0)
+    if re.search(r"сегодня\s*(?:в|,)\s*\d", low):
+        return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     if re.search(r"вчера\s*(?:в|,)\s*\d", low):
-        return now.timestamp() - 86400
+        return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() - 86400
     m = re.search(r"(\d+)\s*(?:дн|день|дня|дней)\w*\s+назад", low)
     if m:
         return now.timestamp() - int(m.group(1)) * 86400
@@ -740,15 +751,31 @@ def is_today(L: Listing) -> bool:
     return datetime.fromtimestamp(L.published, MINSK_TZ).date() == datetime.now(MINSK_TZ).date()
 
 
+def ago_text(L: Listing) -> str:
+    """«25 мин назад», «3 ч 10 мин назад», «2 дн. 5 ч назад»; если у площадки только дата — «вчера (время не указано)»."""
+    d = age_days(L)
+    local = datetime.fromtimestamp(L.published, MINSK_TZ)
+    if local.hour == 0 and local.minute == 0 and local.second == 0:
+        n = (datetime.now(MINSK_TZ).date() - local.date()).days
+        day = "сегодня" if n <= 0 else ("вчера" if n == 1 else f"{n} дн. назад")
+        return f"{day} (время не указано)"
+    mins = int(d * 1440)
+    if mins < 60:
+        return f"{max(1, mins)} мин назад"
+    h, m = divmod(mins, 60)
+    if h < 24:
+        return f"{h} ч {m} мин назад" if m else f"{h} ч назад"
+    days, h = divmod(h, 24)
+    return f"{days} дн. {h} ч назад" if h else f"{days} дн. назад"
+
+
 def age_label(L: Listing) -> str:
     d = age_days(L)
     if d is None:
         return "📅 дата публикации не указана"
     if is_today(L):
-        return "🆕 <b>Сегодня</b> · новое объявление"
-    n = max(1, int(d))
-    when = "вчера" if n == 1 else f"{n} дн. назад"
-    return f"📅 Опубликовано {when}"
+        return f"🆕 <b>Сегодня</b> · опубликовано {ago_text(L)}"
+    return f"📅 Опубликовано {ago_text(L)}"
 
 
 def fmt(L: Listing) -> str:
