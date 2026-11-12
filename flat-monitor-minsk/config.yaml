@@ -85,8 +85,8 @@ sources:
     enabled: true
     api_url: "https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&cur=USD&gtsy=country-belarus~province-minsk~locality-minsk&lang=ru&prc=r%3A150%2C550&rms=v.or%3A1%2C2&size=30&sort=lst.d&typ=let&cmp=0"   # cmp=0 — только частные
     pages: 2                  # обычный проход — свежие страницы
-    first_run_pages: 15       # первый запуск — всё, что сейчас опубликовано
-    fetch_details: true
+    first_run_pages: 8       # первый запуск — всё, что сейчас опубликовано
+    fetch_details: false               # описание и параметры уже есть в API; сайт медленно отвечает серверам GitHub
     detail_limit: 25
     first_run_detail_limit: 300
     delay_sec: 1.5
