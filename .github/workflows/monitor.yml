@@ -1,12 +1,14 @@
 name: flat-monitor
 
+# Как работает: один запуск держится ~5,5 часа и проверяет площадки каждые ~5 минут.
+# Расписание раз в час лишь перезапускает цикл: пока идёт предыдущий, новый ждёт в очереди.
 on:
   schedule:
-    - cron: "7,17,27,37,47,57 * * * *"   # каждые 10 минут (GitHub может задерживать на 5–15 мин)
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       mode:
-        description: "run — обычный проход, test — тестовое сообщение, dry — проверка без отправки"
+        description: "run — цикл проверок, test — тестовое сообщение, dry — проверка без отправки"
         type: choice
         default: run
         options: [run, test, dry]
@@ -15,20 +17,20 @@ permissions:
   contents: write
 
 concurrency:
-  group: flat-monitor
+  group: flat-monitor-${{ github.event.inputs.mode || 'run' }}   # test/dry не ждут цикл
   cancel-in-progress: false
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 45   # первый запуск долгий; обычный проход — несколько минут
+    timeout-minutes: 355
     defaults:
       run:
         working-directory: flat-monitor-minsk   # файлы проекта лежат в этой папке
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main   # всегда свежая версия (с data/state.json), а не снимок на момент постановки в очередь
+          ref: main   # всегда свежая версия (с data/state.json)
 
       - uses: actions/setup-python@v5
         with:
@@ -43,12 +45,22 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python bot.py --mode "${{ github.event.inputs.mode || 'run' }}"
-
-      - name: Save state
-        if: ${{ (github.event.inputs.mode || 'run') == 'run' }}
+          MODE: ${{ github.event.inputs.mode || 'run' }}
         run: |
+          if [ "$MODE" != "run" ]; then
+            python bot.py --mode "$MODE"
+            exit 0
+          fi
           git config user.name "flat-monitor-bot"
           git config user.email "flat-monitor-bot@users.noreply.github.com"
-          git add data/state.json
-          git diff --cached --quiet || (git commit -m "state update" && git pull --rebase && git push)
+          END=$((SECONDS + 330*60))          # цикл ~5,5 часа (лимит GitHub — 6 часов)
+          while [ $SECONDS -lt $END ]; do
+            git pull --rebase -q || true       # подхватить правки config.yaml / bot.py
+            python bot.py --mode run || echo "проход завершился с ошибкой, продолжаю"
+            git add data/state.json
+            if ! git diff --cached --quiet; then
+              git commit -q -m "state update"
+              git pull --rebase -q && git push -q || echo "не удалось сохранить state, повторю в следующий раз"
+            fi
+            sleep 180                          # пауза между проходами (проход + пауза ≈ 5 минут)
+          done
