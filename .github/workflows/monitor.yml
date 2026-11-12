@@ -21,7 +21,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45   # первый запуск долгий; обычный проход — несколько минут
     defaults:
       run:
         working-directory: flat-monitor-minsk   # файлы проекта лежат в этой папке
