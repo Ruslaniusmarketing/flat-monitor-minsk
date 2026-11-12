@@ -734,15 +734,21 @@ def is_fresh(L: Listing) -> bool:
     return d is not None and d < CFG["send"].get("fresh_days", 3)
 
 
+def is_today(L: Listing) -> bool:
+    if L.published is None:
+        return False
+    return datetime.fromtimestamp(L.published, MINSK_TZ).date() == datetime.now(MINSK_TZ).date()
+
+
 def age_label(L: Listing) -> str:
     d = age_days(L)
     if d is None:
         return "📅 дата публикации не указана"
-    n = int(d)
-    when = "сегодня" if n == 0 else ("вчера" if n == 1 else f"{n} дн. назад")
-    if is_fresh(L):
-        return f"🆕 <b>Свежее</b> · опубликовано {when}"
-    return f"🕰 Старое · висит {n} дн."
+    if is_today(L):
+        return "🆕 <b>Сегодня</b> · новое объявление"
+    n = max(1, int(d))
+    when = "вчера" if n == 1 else f"{n} дн. назад"
+    return f"📅 Опубликовано {when}"
 
 
 def fmt(L: Listing) -> str:
@@ -901,6 +907,13 @@ def run_once(mode: str = "run"):
             reasons[why] = reasons.get(why, 0) + 1
             st["seen"][L.key] = now
             continue
+        mx = CFG["send"].get("max_age_days")
+        d = age_days(L)
+        if mx is not None and d is not None and d > mx:
+            why = f"старше {mx} дн."
+            reasons[why] = reasons.get(why, 0) + 1
+            st["seen"][L.key] = now
+            continue
         score(L)
         fp = fingerprint(L)
         if fp and fp in st["fp"] and st["fp"][fp].get("k") != L.key:
@@ -913,10 +926,13 @@ def run_once(mode: str = "run"):
             st["seen"][L.key] = now
             continue
         passed.append(L)
-    # сначала свежие (до fresh_days), внутри — по рейтингу; старые тоже присылаются, но после
-    passed.sort(key=lambda x: (is_fresh(x), x.score, -(x.price_usd or 999)), reverse=True)
-    n_fresh = sum(1 for x in passed if is_fresh(x))
-    log(f"Подходит: {len(passed)} (свежих {n_fresh}) · отсеяно после проверки: {reasons or 'нет'}")
+    # сначала сегодняшние (самые новые сверху), потом остальные по свежести, без даты — в конце
+    def order(x):
+        d = age_days(x)
+        return (is_today(x), d is not None, -(d if d is not None else 999), x.score)
+    passed.sort(key=order, reverse=True)
+    n_fresh = sum(1 for x in passed if is_today(x))
+    log(f"Подходит: {len(passed)} (сегодняшних {n_fresh}) · отсеяно после проверки: {reasons or 'нет'}")
 
     # всё подходящее идёт карточками; если больше лимита — остаток уйдёт следующими проходами
     limit = CFG["send"]["first_run_limit"] if first else CFG["send"]["max_per_run"]
