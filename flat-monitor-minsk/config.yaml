@@ -39,10 +39,10 @@ priority_zones:
     radius_km: 1.0
     keywords: ["победителей", "дрозд", "веснянк", "тимирязева"]
     points:
-      - [53.9090, 27.5390]    # пр. Победителей у Дворца спорта
-      - [53.9200, 27.5150]    # пр. Победителей, парк Победы
+      - [53.9107, 27.5497]    # пр. Победителей у Дворца спорта
+      - [53.9230, 27.5351]    # пр. Победителей, парк Победы
       - [53.9365, 27.4830]    # пр. Победителей, Минск-Арена
-      - [53.9440, 27.4700]    # Дрозды
+      - [53.9470, 27.5040]    # Дрозды
 
 # ---------- Рейтинг (сумма баллов) ----------
 scoring:
@@ -83,14 +83,14 @@ sources:
     title: Kufar
     type: kufar
     enabled: true
-    api_url: "https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&cur=USD&gtsy=country-belarus~province-minsk~locality-minsk&lang=ru&prc=r%3A150%2C550&rms=v.or%3A1%2C2&size=30&sort=lst.d&typ=let"
+    api_url: "https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&cur=USD&gtsy=country-belarus~province-minsk~locality-minsk&lang=ru&prc=r%3A150%2C550&rms=v.or%3A1%2C2&size=30&sort=lst.d&typ=let&cmp=0"   # cmp=0 — только частные
     pages: 2                  # обычный проход — свежие страницы
     first_run_pages: 15       # первый запуск — всё, что сейчас опубликовано
     fetch_details: true
     detail_limit: 25
     first_run_detail_limit: 300
     delay_sec: 1.5
-    detail_selectors: []
+    detail_selectors: ['[data-name="description-block"]', '[data-name="parameters-block-with-groups"]']
 
   - name: onliner
     title: Onliner
@@ -103,7 +103,7 @@ sources:
     detail_limit: 25
     first_run_detail_limit: 300
     delay_sec: 1.5
-    detail_selectors: []
+    detail_selectors: ['.apartment-info__sub-line_extended-bottom', '.apartment-options']
 
   - name: realt
     title: Realt
@@ -124,24 +124,24 @@ sources:
     title: Domovita
     type: generic
     enabled: true
-    list_url: "https://domovita.by/minsk/flats/rent"
-    link_regex: "domovita\\.by/minsk/flats/rent/[^?#]*?(\\d{4,})"
-    card_selector: ""
+    list_url: "https://domovita.by/minsk/flats/rent?rooms=1%2C2&price%5Bmax%5D=550&individual=yes&price_type=all_usd"   # individual=yes — от собственника
+    link_regex: "/minsk/flats/rent/(\\d-komnatnaa-kvartira[a-z0-9\\-]*)"   # в ссылках нет числового id — ловим адрес-слаг
+    card_selector: ".found_item"
     page_param: page          # параметр номера страницы в адресе выдачи
     pages: 1
     first_run_pages: 8
     fetch_details: true
     detail_limit: 20
     delay_sec: 2
-    detail_selectors: []
+    detail_selectors: ['[class*="object-page-content-wrapper"]']
 
   # Дополнительные площадки — включаются после проверки (см. ТЗ, этап 2.5)
   - name: neagent
     title: Neagent
     type: generic
-    enabled: false
-    list_url: "https://neagent.by/kvartira/snyat/minsk"
-    link_regex: "neagent\\.by/.*?(\\d{5,})"
+    enabled: true
+    list_url: "https://neagent.by/kvartira/snyat"   # только собственники
+    link_regex: "/kvartira/snyat/address/([a-z0-9\\-]+)"
     card_selector: ""
     page_param: page          # параметр номера страницы в адресе выдачи
     pages: 1
@@ -149,14 +149,14 @@ sources:
     fetch_details: true
     detail_limit: 15
     delay_sec: 2
-    detail_selectors: []
+    detail_selectors: ['.text-content', '.bottom-index-params-content']
 
   - name: gohome
     title: GoHome
     type: generic
-    enabled: false
-    list_url: "https://gohome.by/rent/flat/minsk"
-    link_regex: "gohome\\.by/.*?(\\d{5,})"
+    enabled: true
+    list_url: "https://gohome.by/rent/flat/minsk-bez-posrednikov"
+    link_regex: "/ads/view/(\\d+)"
     card_selector: ""
     page_param: page          # параметр номера страницы в адресе выдачи
     pages: 1
@@ -164,4 +164,19 @@ sources:
     fetch_details: true
     detail_limit: 15
     delay_sec: 2
-    detail_selectors: []
+    detail_selectors: ['.w-adveadvert-info']
+
+  - name: hata
+    title: Hata.by
+    type: generic
+    enabled: true
+    list_url: "https://www.hata.by/rent-flat/bez-posrednikov__ht/"   # без посредников
+    link_regex: "/object/(\\d+)/"
+    card_selector: ""
+    page_param: page          # параметр номера страницы в адресе выдачи
+    pages: 1
+    first_run_pages: 3
+    fetch_details: true
+    detail_limit: 15
+    delay_sec: 2
+    detail_selectors: ['.b-card']
