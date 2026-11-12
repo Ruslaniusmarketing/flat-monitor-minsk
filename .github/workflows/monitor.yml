@@ -27,6 +27,8 @@ jobs:
         working-directory: flat-monitor-minsk   # файлы проекта лежат в этой папке
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main   # всегда свежая версия (с data/state.json), а не снимок на момент постановки в очередь
 
       - uses: actions/setup-python@v5
         with:
