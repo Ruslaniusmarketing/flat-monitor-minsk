@@ -1,6 +1,6 @@
 name: flat-monitor
 
-# Как работает: один запуск держится ~5,5 часа и проверяет площадки каждые ~5 минут.
+# Как работает: один запуск держится ~5,5 часа и проверяет площадки примерно раз в минуту.
 # Расписание раз в час лишь перезапускает цикл: пока идёт предыдущий, новый ждёт в очереди.
 on:
   schedule:
@@ -62,5 +62,7 @@ jobs:
               git commit -q -m "state update"
               git pull --rebase -q && git push -q || echo "не удалось сохранить state, повторю в следующий раз"
             fi
-            sleep 180                          # пауза между проходами (проход + пауза ≈ 5 минут)
+            # пауза между проходами берётся из config.yaml (loop_sleep_sec), по умолчанию 30 сек
+            PAUSE=$(python -c 'import yaml; print(int(yaml.safe_load(open("config.yaml")).get("loop_sleep_sec", 30)))' 2>/dev/null || echo 30)
+            sleep "$PAUSE"
           done
