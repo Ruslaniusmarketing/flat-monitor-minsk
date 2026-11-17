@@ -71,6 +71,13 @@ send:
 # пауза между проходами цикла в секундах (проход идёт ~30 сек, итого проверка примерно раз в минуту)
 loop_sleep_sec: 30
 
+# снижение цены: квартиры дороже бюджета (в адресах выдачи потолок $700) запоминаются с ценой;
+# если подешевели до max_price_usd — приходит карточка «💸 Цена снижена»
+price_watch:
+  enabled: true
+  deep_every_min: 30          # как часто смотреть глубже первых страниц
+  deep_pages: 6               # сколько страниц выдачи смотреть в глубокий проход
+
 geo:
   enabled: true               # район по координатам через OpenStreetMap
   budget: 40                  # запросов за проход
@@ -87,7 +94,7 @@ sources:
     title: Kufar
     type: kufar
     enabled: true
-    api_url: "https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&cur=USD&gtsy=country-belarus~province-minsk~locality-minsk&lang=ru&prc=r%3A150%2C580&rms=v.or%3A1%2C2&size=30&sort=lst.d&typ=let&cmp=0"   # cmp=0 — только частные
+    api_url: "https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=1010&cur=USD&gtsy=country-belarus~province-minsk~locality-minsk&lang=ru&prc=r%3A150%2C700&rms=v.or%3A1%2C2&size=30&sort=lst.d&typ=let&cmp=0"   # cmp=0 — только частные
     pages: 2                  # обычный проход — свежие страницы
     first_run_pages: 8       # первый запуск — всё, что сейчас опубликовано
     fetch_details: false               # описание и параметры уже есть в API; сайт медленно отвечает серверам GitHub
@@ -100,7 +107,7 @@ sources:
     title: Onliner
     type: onliner
     enabled: true
-    api_url: "https://r.onliner.by/sdapi/ak.api/search/apartments?rent_type%5B%5D=1_room&rent_type%5B%5D=2_rooms&price%5Bmin%5D=150&price%5Bmax%5D=580&currency=usd&only_owner=true&bounds%5Blb%5D%5Blat%5D=53.78&bounds%5Blb%5D%5Blong%5D=27.36&bounds%5Brt%5D%5Blat%5D=54.02&bounds%5Brt%5D%5Blong%5D=27.78&order=created_at%3Adesc"
+    api_url: "https://r.onliner.by/sdapi/ak.api/search/apartments?rent_type%5B%5D=1_room&rent_type%5B%5D=2_rooms&price%5Bmin%5D=150&price%5Bmax%5D=700&currency=usd&only_owner=true&bounds%5Blb%5D%5Blat%5D=53.78&bounds%5Blb%5D%5Blong%5D=27.36&bounds%5Brt%5D%5Blat%5D=54.02&bounds%5Brt%5D%5Blong%5D=27.78&order=created_at%3Adesc"
     pages: 2                  # обычный проход — свежие страницы
     first_run_pages: 15       # первый запуск — всё, что сейчас опубликовано
     fetch_details: true
@@ -128,7 +135,7 @@ sources:
     title: Domovita
     type: generic
     enabled: true
-    list_url: "https://domovita.by/minsk/flats/rent?rooms=1%2C2&price%5Bmax%5D=580&individual=yes&price_type=all_usd"   # individual=yes — от собственника
+    list_url: "https://domovita.by/minsk/flats/rent?rooms=1%2C2&price%5Bmax%5D=700&individual=yes&price_type=all_usd"   # individual=yes — от собственника
     link_regex: "/minsk/flats/rent/(\\d-komnatnaa-kvartira[a-z0-9\\-]*)"   # в ссылках нет числового id — ловим адрес-слаг
     card_selector: ".found_item"
     page_param: page          # параметр номера страницы в адресе выдачи
