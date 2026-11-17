@@ -46,12 +46,15 @@ MINSK_TZ = timezone(timedelta(hours=3))
 SOURCE_TITLES: dict[str, str] = {}
 GEO_BUDGET = [0]
 FIRST_RUN = [False]
+DEEP_SCAN = [False]   # глубокий проход для отслеживания снижения цен
 
 
 def pages_for(sc) -> int:
     """Первый запуск — глубоко (все висящие объявления), дальше — только свежие страницы."""
     if FIRST_RUN[0]:
         return int(sc.get("first_run_pages", sc.get("pages", 1)))
+    if DEEP_SCAN[0]:
+        return max(int(sc.get("pages", 1)), int((CFG.get("price_watch") or {}).get("deep_pages", 5)))
     return int(sc.get("pages", 1))
 
 
@@ -82,6 +85,7 @@ class Listing:
     walls: str = ""
     geo: str = ""                     # район/микрорайон по координатам (OpenStreetMap)
     published: float | None = None    # когда опубликовано/поднято (unix-время)
+    price_drop_from: float | None = None   # было дороже бюджета, цена снизилась
     zone: str = ""
     score: int = 0
     tags: list = field(default_factory=list)
@@ -787,6 +791,8 @@ def fmt(L: Listing) -> str:
     if L.price_usd:
         head.append(f"<b>${L.price_usd:,.0f}</b>".replace(",", " "))
     lines = [age_label(L), " · ".join(head)]
+    if L.price_drop_from:
+        lines.insert(0, f"💸 <b>Цена снижена</b>: ${L.price_drop_from:,.0f} → ${L.price_usd:,.0f}".replace(",", " "))
     if L.title and L.source != "onliner":
         lines.append(f"<i>{e(L.title[:100])}</i>")
     place = L.address
@@ -876,6 +882,7 @@ def save_state(st: dict):
     cutoff = time.time() - CFG["state"]["keep_days"] * 86400
     st["seen"] = {k: v for k, v in st["seen"].items() if v >= cutoff}
     st["fp"] = {k: v for k, v in st["fp"].items() if v.get("t", 0) >= cutoff}
+    st["price_watch"] = {k: v for k, v in st.get("price_watch", {}).items() if v.get("t", 0) >= cutoff}
     if len(st["geo"]) > 4000:
         st["geo"] = dict(list(st["geo"].items())[-3000:])
     STATE_PATH.write_text(json.dumps(st, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
@@ -892,6 +899,19 @@ def run_once(mode: str = "run"):
     if first:
         log("Первый запуск: разбираю всё, что сейчас опубликовано (это дольше обычного прохода)")
 
+    # отслеживание снижения цен: дорогие объявления запоминаем с ценой, раз в deep_every_min смотрим глубже
+    pw = CFG.get("price_watch") or {}
+    pw_on = bool(pw.get("enabled", False))
+    st.setdefault("price_watch", {})
+    DEEP_SCAN[0] = (not first) and pw_on and now - int(st.get("last_deep", 0)) >= int(pw.get("deep_every_min", 30)) * 60
+    if DEEP_SCAN[0]:
+        st["last_deep"] = now
+        log("Глубокий проход: проверяю снижение цен")
+
+    def watch(L, why):
+        if pw_on and why == "дороже бюджета" and L.price_usd:
+            st["price_watch"][L.key] = {"p": L.price_usd, "t": now}
+
     candidates: list[Listing] = []
     for sc in CFG["sources"]:
         if not sc.get("enabled", True):
@@ -907,23 +927,32 @@ def run_once(mode: str = "run"):
             uniq.setdefault(L.key, L)
         items = list(uniq.values())
         new = [L for L in items if L.key not in st["seen"]]
+        drops = []
+        if pw_on:
+            for L in items:
+                w = st["price_watch"].get(L.key)
+                if w and L.price_usd and L.price_usd <= CFG["filters"]["max_price_usd"] and L.price_usd < w["p"]:
+                    L.price_drop_from = w["p"]
+                    drops.append(L)
+                    st["price_watch"].pop(L.key, None)   # одно уведомление на снижение
         pre, rejected = [], 0
         for L in new:
-            ok, _ = hard_filter(L)
+            ok, why = hard_filter(L)
             if ok:
                 pre.append(L)
             else:
                 rejected += 1
                 st["seen"][L.key] = now
+                watch(L, why)
         # что не успели проверить в этот раз, остаётся непросмотренным и разберётся следующими проходами
         limit = sc.get("first_run_detail_limit", 150) if first else sc.get("detail_limit", 25)
-        take = pre[:limit]
+        take = pre[:limit] + drops
         if sc.get("fetch_details", True):
             for L in take:
                 enrich_detail(L, sc)
                 time.sleep(sc.get("delay_sec", 1.5))
         candidates.extend(take)
-        log(f"[{sc['name']}] всего {len(items)} · новых {len(new)} · отсеяно сразу {rejected} · на проверку {len(take)}")
+        log(f"[{sc['name']}] всего {len(items)} · новых {len(new)} · отсеяно сразу {rejected} · на проверку {len(take)}" + (f" · 💸 подешевело {len(drops)}" if drops else ""))
 
     passed: list[Listing] = []
     reasons: dict[str, int] = {}
@@ -933,10 +962,13 @@ def run_once(mode: str = "run"):
         if not ok:
             reasons[why] = reasons.get(why, 0) + 1
             st["seen"][L.key] = now
+            if L.price_drop_from:
+                st["price_watch"].pop(L.key, None)
+            watch(L, why)
             continue
         mx = CFG["send"].get("max_age_days")
         d = age_days(L)
-        if mx is not None and d is not None and d > mx:
+        if mx is not None and d is not None and d > mx and not L.price_drop_from:
             why = f"старше {mx} дн."
             reasons[why] = reasons.get(why, 0) + 1
             st["seen"][L.key] = now
@@ -956,7 +988,7 @@ def run_once(mode: str = "run"):
     # сначала сегодняшние (самые новые сверху), потом остальные по свежести, без даты — в конце
     def order(x):
         d = age_days(x)
-        return (is_today(x), d is not None, -(d if d is not None else 999), x.score)
+        return (is_today(x) or bool(x.price_drop_from), d is not None, -(d if d is not None else 999), x.score)
     passed.sort(key=order, reverse=True)
     n_fresh = sum(1 for x in passed if is_today(x))
     log(f"Подходит: {len(passed)} (сегодняшних {n_fresh}) · отсеяно после проверки: {reasons or 'нет'}")
@@ -981,6 +1013,7 @@ def run_once(mode: str = "run"):
 
     def mark(L):
         st["seen"][L.key] = now
+        st["price_watch"].pop(L.key, None)
         fp = fingerprint(L)
         if fp:
             st["fp"][fp] = {"k": L.key, "t": now}
