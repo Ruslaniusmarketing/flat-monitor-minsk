@@ -646,6 +646,11 @@ def is_agency(L: Listing) -> bool:
     return bool(re.search(CFG["filters"]["agency_regex"], t, re.I))
 
 
+# причины отсева, которые перепроверяются после изменения фильтров в config.yaml
+RECHECK_REASONS = {"дороже бюджета", "слишком дёшево (посуточно/комната)", "площадь вне диапазона",
+                   "исключённый район", "агентство"}
+
+
 def hard_filter(L: Listing):
     f = CFG["filters"]
     t = (L.title + " " + L.text).lower()
@@ -872,7 +877,7 @@ def load_state() -> dict:
             st = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         except ValueError:
             st = {}
-    for k in ("seen", "fp", "geo"):
+    for k in ("seen", "fp", "geo", "rejected", "sent", "price_watch"):
         st.setdefault(k, {})
     return st
 
@@ -883,6 +888,8 @@ def save_state(st: dict):
     st["seen"] = {k: v for k, v in st["seen"].items() if v >= cutoff}
     st["fp"] = {k: v for k, v in st["fp"].items() if v.get("t", 0) >= cutoff}
     st["price_watch"] = {k: v for k, v in st.get("price_watch", {}).items() if v.get("t", 0) >= cutoff}
+    st["rejected"] = {k: v for k, v in st.get("rejected", {}).items() if v.get("t", 0) >= cutoff}
+    st["sent"] = {k: v for k, v in st.get("sent", {}).items() if v >= cutoff}
     if len(st["geo"]) > 4000:
         st["geo"] = dict(list(st["geo"].items())[-3000:])
     STATE_PATH.write_text(json.dumps(st, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
@@ -911,6 +918,21 @@ def run_once(mode: str = "run"):
     def watch(L, why):
         if pw_on and why == "дороже бюджета" and L.price_usd:
             st["price_watch"][L.key] = {"p": L.price_usd, "t": now}
+
+    def reject(L, why):
+        """Запомнить объявление как просмотренное и сохранить причину отсева."""
+        st["seen"][L.key] = now
+        st["rejected"][L.key] = {"r": why, "t": now}
+
+    # фильтры поменялись — отсеянное по цене/площади/району/агентству проверяется заново
+    fhash = hashlib.md5(json.dumps(CFG["filters"], sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    if st.get("filters_hash") and st["filters_hash"] != fhash:
+        again = [k for k, v in st["rejected"].items() if v.get("r") in RECHECK_REASONS and k not in st["sent"]]
+        for k in again:
+            st["seen"].pop(k, None)
+            st["rejected"].pop(k, None)
+        log(f"Фильтры изменились — перепроверяю ранее отсеянные объявления: {len(again)}")
+    st["filters_hash"] = fhash
 
     candidates: list[Listing] = []
     for sc in CFG["sources"]:
@@ -942,7 +964,7 @@ def run_once(mode: str = "run"):
                 pre.append(L)
             else:
                 rejected += 1
-                st["seen"][L.key] = now
+                reject(L, why)
                 watch(L, why)
         # что не успели проверить в этот раз, остаётся непросмотренным и разберётся следующими проходами
         limit = sc.get("first_run_detail_limit", 150) if first else sc.get("detail_limit", 25)
@@ -961,7 +983,7 @@ def run_once(mode: str = "run"):
         ok, why = hard_filter(L)
         if not ok:
             reasons[why] = reasons.get(why, 0) + 1
-            st["seen"][L.key] = now
+            reject(L, why)
             if L.price_drop_from:
                 st["price_watch"].pop(L.key, None)
             watch(L, why)
@@ -971,18 +993,18 @@ def run_once(mode: str = "run"):
         if mx is not None and d is not None and d > mx and not L.price_drop_from:
             why = f"старше {mx} дн."
             reasons[why] = reasons.get(why, 0) + 1
-            st["seen"][L.key] = now
+            reject(L, why)
             continue
         score(L)
         fp = fingerprint(L)
         if fp and fp in st["fp"] and st["fp"][fp].get("k") != L.key:
             reasons["дубль с другой площадки"] = reasons.get("дубль с другой площадки", 0) + 1
-            st["seen"][L.key] = now
+            reject(L, "дубль с другой площадки")
             continue
         snd = CFG["send"]
         if L.score < snd["min_score"] or (snd.get("only_priority_zones") and not L.zone):
             reasons["низкий рейтинг/не приоритетный район"] = reasons.get("низкий рейтинг/не приоритетный район", 0) + 1
-            st["seen"][L.key] = now
+            reject(L, "низкий рейтинг/не приоритетный район")
             continue
         passed.append(L)
     # сначала сегодняшние (самые новые сверху), потом остальные по свежести, без даты — в конце
@@ -1013,6 +1035,8 @@ def run_once(mode: str = "run"):
 
     def mark(L):
         st["seen"][L.key] = now
+        st["sent"][L.key] = now
+        st["rejected"].pop(L.key, None)
         st["price_watch"].pop(L.key, None)
         fp = fingerprint(L)
         if fp:
