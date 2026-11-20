@@ -924,6 +924,15 @@ def run_once(mode: str = "run"):
         st["seen"][L.key] = now
         st["rejected"][L.key] = {"r": why, "t": now}
 
+    # одноразово: объявления, отсеянные до того, как бот стал запоминать причину, проверяются заново
+    if not first and not st.get("migrated_reasons"):
+        sent_keys = set(st["sent"]) | {v.get("k") for v in st["fp"].values()}
+        again = [k for k in st["seen"] if k not in sent_keys and k not in st["rejected"]]
+        for k in again:
+            st["seen"].pop(k, None)
+        st["migrated_reasons"] = now
+        log(f"Одноразовая перепроверка отсеянного без сохранённой причины: {len(again)}")
+
     # фильтры поменялись — отсеянное по цене/площади/району/агентству проверяется заново
     fhash = hashlib.md5(json.dumps(CFG["filters"], sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     if st.get("filters_hash") and st["filters_hash"] != fhash:
