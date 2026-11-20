@@ -256,6 +256,8 @@ def rooms_from_text(t: str):
         return 1
     if re.search(r"\b[3-5]\s*-?\s*х?\s*-?\s*комн|тр[её]х\s*комнат|тр[её]шк", t):
         return 3
+    if re.search(r"студи", t):
+        return 0
     return None
 
 
@@ -648,7 +650,7 @@ def is_agency(L: Listing) -> bool:
 
 # причины отсева, которые перепроверяются после изменения фильтров в config.yaml
 RECHECK_REASONS = {"дороже бюджета", "слишком дёшево (посуточно/комната)", "площадь вне диапазона",
-                   "исключённый район", "агентство"}
+                   "исключённый район", "агентство", "студия", "не 1–2 комнаты"}
 
 
 def hard_filter(L: Listing):
@@ -665,7 +667,7 @@ def hard_filter(L: Listing):
         return False, "стоп-слово"
     if CFG["filters"].get("exclude_agencies", True) and is_agency(L):
         return False, "агентство"
-    if is_studio(L):
+    if not f.get("allow_studio", False) and is_studio(L):
         return False, "студия"
     place = " ".join([L.district, L.address, L.geo]).lower()
     if any(x in place for x in f["exclude_districts"]):
@@ -740,6 +742,8 @@ def fingerprint(L: Listing):
 def kind_of(L: Listing) -> str:
     if RE_EURO.search(L.title + " " + L.text):
         return "Евродвушка"
+    if L.rooms == 0 or is_studio(L):
+        return "Студия"
     return {1: "1-комн.", 2: "2-комн."}.get(L.rooms, "Квартира")
 
 
