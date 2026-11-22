@@ -87,6 +87,8 @@ class Listing:
     published: float | None = None    # когда опубликовано/поднято (unix-время)
     price_drop_from: float | None = None   # было дороже бюджета, цена снизилась
     zone: str = ""
+    dist_km: float | None = None      # расстояние до центра зоны поиска (filters.zone)
+    pets: str = ""                    # "ok" — можно с животными, "no" — нельзя, "" — не сказано
     score: int = 0
     tags: list = field(default_factory=list)
     missing: list = field(default_factory=list)
@@ -635,6 +637,70 @@ def reverse_geo(L: Listing, st):
         L.address = g["a"]
 
 
+def forward_geo(L: Listing, st):
+    """Координаты по адресу через OpenStreetMap (Nominatim), с кэшем. Возвращает ok / none / skipped."""
+    if L.lat is not None and L.lon is not None:
+        return "ok"
+    addr = re.sub(r"\s+", " ", (L.address or "").strip())
+    if len(addr) < 5:
+        return "none"
+    st.setdefault("geo_fwd", {})
+    key = addr.lower()
+    if key not in st["geo_fwd"]:
+        if GEO_BUDGET[0] <= 0:
+            return "skipped"
+        GEO_BUDGET[0] -= 1
+        res = None
+        try:
+            q = addr if "минск" in key else f"Минск, {addr}"
+            r = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"format": "jsonv2", "q": q, "limit": 1, "countrycodes": "by", "accept-language": "ru"},
+                headers={"User-Agent": "flat-monitor-minsk/1.0 (personal apartment search)"}, timeout=20)
+            j = r.json() if r.status_code == 200 else []
+            if j:
+                res = [float(j[0]["lat"]), float(j[0]["lon"])]
+        except (requests.RequestException, ValueError, KeyError, TypeError):
+            res = None
+        time.sleep(1.1)
+        st["geo_fwd"][key] = res
+    res = st["geo_fwd"][key]
+    if res:
+        L.lat, L.lon = res[0], res[1]
+        return "ok"
+    return "none"
+
+
+def zone_check(L: Listing):
+    """Зона поиска из filters.zone: по координатам — радиус, без координат — ключевые слова."""
+    z = CFG["filters"].get("zone")
+    if not z:
+        return True, ""
+    c = z.get("center")
+    if L.lat is not None and L.lon is not None and c:
+        L.dist_km = round(haversine(L.lat, L.lon, c[0], c[1]), 1)
+        if L.dist_km <= float(z.get("radius_km", 4)):
+            return True, ""
+        return False, "вне зоны"
+    hay = " ".join([L.address, L.district, L.geo, L.title, L.text, L.extra]).lower()
+    if any(k in hay for k in z.get("keywords", [])):
+        return True, ""
+    return False, "адрес не определён"
+
+
+RE_PETS_NO = re.compile(r"без\s+(?:домашних\s+)?животных|животны[ех]\s+нет|не\s+с\s+животными|животные\s+не|с\s+животными\s+нет|без\s+питомц|животными\s+запрещ|животных\s+не\s+(?:рассматр|заселя|пуска)", re.I)
+RE_PETS_OK = re.compile(r"можно\s+с\s+животн|с\s+животными\s+можно|животны[ех]\s+(?:приветств|рассматр|можно|да\b)|с\s+животными|с\s+собак|с\s+кошк|с\s+питомц|pet\s*-?\s*friendly", re.I)
+
+
+def detect_pets(L: Listing) -> str:
+    hay = " ".join([L.title, L.text, L.extra])
+    if RE_PETS_NO.search(hay):
+        return "no"
+    if RE_PETS_OK.search(hay):
+        return "ok"
+    return ""
+
+
 # ----------------------------------------------------------------------------- фильтр и рейтинг
 
 RE_NOT_AGENCY = re.compile(
@@ -650,10 +716,10 @@ def is_agency(L: Listing) -> bool:
 
 # причины отсева, которые перепроверяются после изменения фильтров в config.yaml
 RECHECK_REASONS = {"дороже бюджета", "слишком дёшево (посуточно/комната)", "площадь вне диапазона",
-                   "исключённый район", "агентство", "студия", "не 1–2 комнаты"}
+                   "исключённый район", "агентство", "студия", "не 1–2 комнаты", "вне зоны", "адрес не определён"}
 
 
-def hard_filter(L: Listing):
+def hard_filter(L: Listing, final: bool = False):
     f = CFG["filters"]
     t = (L.title + " " + L.text).lower()
     if L.price_usd is not None:
@@ -661,7 +727,7 @@ def hard_filter(L: Listing):
             return False, "дороже бюджета"
         if L.price_usd < f["min_price_usd"]:
             return False, "слишком дёшево (посуточно/комната)"
-    if L.rooms is not None and L.rooms not in f["rooms"]:
+    if f.get("rooms") and L.rooms is not None and L.rooms not in f["rooms"]:
         return False, "не 1–2 комнаты"
     if re.search(f["exclude_regex"], t, re.I):
         return False, "стоп-слово"
@@ -674,6 +740,10 @@ def hard_filter(L: Listing):
         return False, "исключённый район"
     if L.area is not None and not (f["area_min"] <= L.area <= f["area_max"]):
         return False, "площадь вне диапазона"
+    if final:
+        ok, why = zone_check(L)
+        if not ok:
+            return False, why
     return True, ""
 
 
@@ -727,6 +797,11 @@ def score(L: Listing):
         s += w["ideal_area_bonus"]
     if L.owner:
         s += w["owner"]; tags.append("👤 собственник")
+    L.pets = detect_pets(L)
+    if L.pets == "ok":
+        s += int(w.get("pets_ok", 0)); tags.insert(0, "🐶 можно с животными")
+    elif L.pets == "no":
+        tags.insert(0, "🚫 без животных")
     L.score, L.tags, L.missing = s, tags, missing
 
 
@@ -810,7 +885,8 @@ def fmt(L: Listing) -> str:
     if not place:
         place = L.geo
     if place:
-        lines.append("📍 " + e(place[:160]))
+        zn = (CFG["filters"].get("zone") or {}).get("name", "центра зоны")
+        lines.append("📍 " + e(place[:160]) + (f" · {L.dist_km:g} км от {e(zn)}" if L.dist_km is not None else ""))
     if L.zone:
         lines.append("⭐ " + e(L.zone))
     if L.tags:
@@ -992,8 +1068,12 @@ def run_once(mode: str = "run"):
     passed: list[Listing] = []
     reasons: dict[str, int] = {}
     for L in candidates:
+        if CFG["filters"].get("zone") and L.lat is None:
+            if forward_geo(L, st) == "skipped":
+                reasons["геокодер: отложено до следующего прохода"] = reasons.get("геокодер: отложено до следующего прохода", 0) + 1
+                continue   # не помечаем просмотренным — проверим в следующий проход
         reverse_geo(L, st)
-        ok, why = hard_filter(L)
+        ok, why = hard_filter(L, final=True)
         if not ok:
             reasons[why] = reasons.get(why, 0) + 1
             reject(L, why)
@@ -1054,6 +1134,11 @@ def run_once(mode: str = "run"):
         fp = fingerprint(L)
         if fp:
             st["fp"][fp] = {"k": L.key, "t": now}
+
+    ann = CFG.get("announce") or {}
+    if ann.get("id") and ann.get("text") and st.get("announced") != ann["id"]:
+        if tg_text(ann["text"]):
+            st["announced"] = ann["id"]
 
     sent = 0
     for L in to_send:
